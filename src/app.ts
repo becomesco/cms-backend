@@ -6,61 +6,112 @@ import * as fs from 'fs';
 import {
   Application,
   CORSMiddleware,
-  RequestLoggerMiddleware,
   BodyParserMiddleware,
   PurpleCheetah,
+  MongoDBConfig,
+  EnableMongoDB,
+  EnableSocketServer,
+  JWTSecurity,
+  RoleName,
+  PermissionName,
+  JWTConfigService,
 } from '@becomes/purple-cheetah';
-import { SwaggerController } from './swagger/controller';
-import { SwaggerMiddleware } from './swagger/middleware';
+import { SwaggerController, SwaggerMiddleware } from './swagger';
+import { UserController } from './user';
+import { AuthController } from './auth';
+import { GroupController } from './group';
+import { TemplateController } from './template';
+import { WidgetController } from './widget';
+import { LanguageController } from './language';
+import { ApiKeyController } from './api';
+import { MediaController, MediaParserMiddleware } from './media';
+import { Types } from 'mongoose';
 
-// let dbConfig: MongoDBConfig;
-// if (process.env.DB_CLUSTER && process.env.DB_CLUSTER !== 'undefined') {
-//   dbConfig = {
-//     atlas: {
-//       db: {
-//         cluster: process.env.DB_CLUSTER,
-//         name: process.env.DB_NAME,
-//         readWrite: true,
-//       },
-//       user: {
-//         name: process.env.DB_USER,
-//         password: process.env.DB_PASS,
-//       },
-//     },
-//   };
-// } else {
-//   dbConfig = {
-//     selfHosted: {
-//       db: {
-//         host: process.env.DB_HOST,
-//         port: parseInt(process.env.DB_PORT, 10),
-//         name: process.env.DB_NAME,
-//       },
-//       user: {
-//         name: process.env.DB_USER,
-//         password: process.env.DB_PASS,
-//       },
-//     },
-//   };
-// }
+let dbConfig: MongoDBConfig;
+if (process.env.DB_USE_FS) {
+  dbConfig = {
+    doNotUse: true,
+  };
+} else {
+  if (process.env.DB_CLUSTER && process.env.DB_CLUSTER !== 'undefined') {
+    dbConfig = {
+      atlas: {
+        db: {
+          cluster: process.env.DB_CLUSTER,
+          name: process.env.DB_NAME,
+          readWrite: true,
+        },
+        user: {
+          name: process.env.DB_USER,
+          password: process.env.DB_PASS,
+        },
+      },
+    };
+  } else {
+    dbConfig = {
+      selfHosted: {
+        db: {
+          host: process.env.DB_HOST,
+          port: parseInt(process.env.DB_PORT, 10),
+          name: process.env.DB_NAME,
+        },
+        user: {
+          name: process.env.DB_USER,
+          password: process.env.DB_PASS,
+        },
+      },
+    };
+  }
+}
 
 /**
  * Application Module that starts all dependencies and
  * handles HTTP requests.
  */
-// @EnableMongoDB(dbConfig)
+@EnableSocketServer({
+  path: '/api/socket/server/',
+  onConnection: (socket) => {
+    return {
+      id: new Types.ObjectId().toHexString(),
+      createdAt: Date.now(),
+      group: 'global',
+      socket,
+    };
+  },
+  verifyConnection: async (socket) => {
+    const jwt = JWTSecurity.checkAndValidateAndGet(socket.request._query.at, {
+      roles: [RoleName.ADMIN, RoleName.MANAGER],
+      permission: PermissionName.READ,
+      JWTConfig: JWTConfigService.get('user-token-config'),
+    });
+    if (jwt instanceof Error) {
+      return false;
+    }
+    return true;
+  },
+  eventHandlers: [],
+})
 @Application({
-  port: parseInt(process.env.PORT, 10),
+  port: parseInt(process.env.API_PORT, 10),
   controllers: [
     process.env.DEV === 'true' ? new SwaggerController() : undefined,
+    new UserController(),
+    new AuthController(),
+    new GroupController(),
+    new TemplateController(),
+    new WidgetController(),
+    new LanguageController(),
+    new ApiKeyController(),
+    new MediaController(),
   ],
   middleware: [
     new CORSMiddleware(),
-    new RequestLoggerMiddleware(),
     new BodyParserMiddleware(),
+    new MediaParserMiddleware(),
     process.env.DEV === 'true' ? new SwaggerMiddleware() : undefined,
   ],
 })
+@EnableMongoDB(dbConfig)
 export class App extends PurpleCheetah {
   protected start() {
     this.app.use(
